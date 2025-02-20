@@ -1,0 +1,8 @@
+/tailbone
+/.envrc
+/.idea
+/core/test_data/*
+!/core/test_data/*.json
+/keys/
+/.tsnet/
+.idea/

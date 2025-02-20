@@ -1,0 +1,23 @@
+# From .gitignore
+tailbone
+.envrc
+.idea
+
+# Docker specific
+Dockerfile
+.dockerignore
+
+# Common development artifacts
+*.log
+tmp/
+.git/ 
+
+# Test data
+core/test_data/*
+
+# Key files
+keys/
+.tsnet/
+
+# Tailscale
+/.tsnet/
