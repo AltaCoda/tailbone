@@ -39,7 +39,7 @@ jobs:
         go build -v -o "dist/${output_name}" ./cmd/keys
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: tailbone-${{ matrix.goos }}-${{ matrix.goarch }}
         path: dist/*
