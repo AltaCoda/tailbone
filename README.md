@@ -1,6 +1,11 @@
+Sponsored by [Fortworx](https://fortworx.com)
+<div>
+  <img alt="Fortworx Logo" src="https://cdn.fortworx.com/images/logo_full_dark.png" width="300"/>
+</div>
+
 # Tailbone
 
-Tailbone is an identity provider based on JWT that uses Tailscale for authentication. 
+Tailbone is an identity provider based on JWT that uses Tailscale for authentication.
 
 ## What is it for?
 Tailscale offer an easy way to setup a secure VPN. It also has built-in authentication mechanism so any client can be safely authenticated with Tailscale.
@@ -17,7 +22,7 @@ The tokens are issued with RSA keys that are verifiable via a JWKS endpoint. Thi
 
 ## Installation
 
-You can install Tailbone using `go install github.com/tailbone-io/tailbone@latest` or download a release from the [releases page](https://github.com/tailbone-io/tailbone/releases).
+You can install Tailbone using `go install github.com/altacoda/tailbone@latest` or download a release from the [releases page](https://github.com/altacoda/tailbone/releases).
 
 ## Setup
 You need two things to get started:
