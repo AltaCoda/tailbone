@@ -42,9 +42,14 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
       run: |
-        output_name="tailbone"
+        # Base name with OS and architecture
+        base_name="tailbone-${{ matrix.goos }}-${{ matrix.goarch }}"
+        
+        # Add .exe extension for Windows
         if [ "${{ matrix.goos }}" = "windows" ]; then
-          output_name="tailbone.exe"
+          output_name="${base_name}.exe"
+        else
+          output_name="${base_name}"
         fi
         
         # Extract version from the release tag
