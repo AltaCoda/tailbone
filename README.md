@@ -5,24 +5,32 @@ Sponsored by [Fortworx](https://fortworx.com)
 
 # Tailbone
 
-Tailbone is an identity provider based on JWT that uses Tailscale for authentication.
+Tailbone is a JWT issuer that uses Tailscale as identity provider.
 
 ## What is it for?
-Tailscale offer an easy way to setup a secure VPN. It also has built-in authentication mechanism so any client can be safely authenticated with Tailscale.
+If you need to identify callers to your services you can use Tailbone to do so. JWTs issued by Tailbone are signed with RSA keys and can be verified by any service that has access to the JWKS endpoint. This means the service does not require access to any shared secret, database or to be part of a VPN. 
 
-Tailbone uses this feature to authenticate any inbound calls it receives over a Tailscale network and issue a JWT token for the caller. This JWT token includes the Tailscale user identity (or server's tag). The caller than can use this token to authenticate with other services that are not behind Tailscale.
+## How does it work?
 
-The tokens are issued with RSA keys that are verifiable via a JWKS endpoint. This means no secrets are shared between the caller and the server.
+1. The client (caller) makes a call to Tailbone in a Tailscale network.
+2. Tailbone verifies the client's identity using Tailscale and issues a JWT token that contains the client's identity.
+3. The client uses the JWT token to make calls to your services.
+4. Your services verify the JWT token using the JWKS endpoint which usually is publicly accessible.
+5. If the token is valid, the service can trust the caller's identity.
+
+## Why not use Tailscale directly?
+You can, if both your client and service are part of your VPN then you can use Tailscale, although you will still need to obtain the identity of the caller via a Tailscale client.
 
 ## Features
 
 - JWT-based authentication using RSA key pairs
-- Tailscale integration for user verification
-- Key management system with local and S3 storage
+- Embedded Tailscale integration for user verification (no need for Tailscale client running on the server).
+- Management of JWKS keys in S3 so the services can verify the JWT tokens.
 
 ## Installation
 
 You can install Tailbone using `go install github.com/altacoda/tailbone@latest` or download a release from the [releases page](https://github.com/altacoda/tailbone/releases).
+You can also use the Dockerfile to build and run Tailbone in a container environment. Since Tailbone has a Tailscale service embedded in it, you don't need to install Tailscale on the host machine or run Tailbone with elevated privileges.
 
 ## Setup
 You need two things to get started:
@@ -34,24 +42,44 @@ You can get a Tailscale auth key from the [Tailscale dashboard](https://login.ta
 
 Tailbone uses an S3 compatible API to store the JWKS. The JWKS file is stored at a location specified by the `key-path` configuration option (default: ".well-known/jwks.json"). Your services will need to be able to access this endpoint to verify the tokens.
 
+### What is S3 for?
+Your services will need to verify the JWT tokens issued by Tailbone. These are verifiable using a JWKS (JSON Web Key Set) that contains the public keys used to sign the tokens. Tailbone manages a JWKs file that contains the public keys used to sign the JWT tokens. This file is stored in an S3 bucket. You can then make this bucket publicly accessible so your services can verify the JWT tokens, usually with a URL like `https://<bucket>.s3.amazonaws.com/.well-known/jwks.json`.
+
 ## Usage
 
+> A Note on environment variables 
+> All parameters in Tailbone are configurable via command line parameters or environment variables (see below for details).
+
+
+### Server Mode
 Start the server with your Tailscale auth key.
 ```bash
 tailbone server start --ts-authkey <tailscale-auth-key>
 ```
 
-Generate a new key pair. The key pair will be stored in the `dir` directory.
+### Housekeeping
+You can schedule running Tailbone housekeeping to ensure private keys stored locally are in sync with the public ones on S3.
+
+```bash
+tailbone server housekeeping
+```
+
+### Client Mode
+Tailbone CLI can be used as a management client for Tailbone.
+
+
+> A Note on Tailbone Admin API
+> Tailbone server runs a gRPC API admin on port 50051 that is used by the Tailbone CLI for management. This API is open to the Tailscale network and access to it should be managed using Tailscale ACLs.
+
+Generate a new key pair.
 ```bash
 tailbone keys generate
 ```
 
-Upload the public key to S3. If there are other keys at the endpoint, they will be merged with the new key.
-```bash
-tailbone keys upload <keyID>
-```
+Remove a key
 
-Remove a key from the JWKS in S3.
+> IMPORTANT: Removing a key will invalidate all tokens signed with that key. This is a destructive operation and should be used with caution.
+
 ```bash
 tailbone keys remove <keyID>
 ```
@@ -61,12 +89,9 @@ List the keys in S3.
 tailbone keys list
 ```
 
-List the keys in the `dir` directory.
-```bash
-tailbone keys list --local
-```
-
 ## API Endpoints
+
+> Tailbone is built to run on Tailscale network and doesn't use HTTPs. Do not expose it on a public network!
 
 Tailbone has two endpoints:
 
@@ -78,7 +103,7 @@ Tailbone has two endpoints:
 The health check endpoint is used to check if the server is running.
 
 ```bash
-curl http://localhost:80/_healthz
+curl http://<IP>/_healthz
 ```
 
 ### Token Endpoint
@@ -86,7 +111,7 @@ curl http://localhost:80/_healthz
 The token endpoint is used to issue a JWT token for a given Tailscale user.
 
 ```bash
-curl -X POST http://localhost:80/issue
+curl -X POST http://<IP>/issue
 ```
 
 This will a JSON response with the following fields:
@@ -137,31 +162,18 @@ The following configuration values are required for S3 operations:
   - `--ts-hostname`: Tailscale hostname (default: "tailbone")
   - `--log.no_color`: Disable color in the logs
 
-### Key Management Commands
-
-- `keys generate`: Generate a new signing key pair
-  - `-s, --size`: RSA key size in bits (default: 2048)
-
-- `keys list`: List available signing keys
-  - `-l, --local`: List keys from local filesystem instead of remote JWKS
-
-- `keys upload [keyID]`: Upload a public key to S3 as JWKS
-  - Requires the key to exist in the keys directory
-  - Will merge with existing JWKS if present
-
-- `keys remove [keyID]`: Remove a key from the JWKS in S3
-  - Requires `--bucket` flag to be set
-
-### Global Flags
+### Global Flags (server mode)
 
 - `--config`: Config file (default: $HOME/.tailbone.*)
 - `--version`: Print version information
-
-### Key Management Global Flags
-
 - `--dir`: Directory containing the keys (default: "keys")
 - `--bucket`: S3 bucket for JWKS storage
 - `--key-path`: Path/key for the JWKS file in S3 (default: ".well-known/jwks.json")
+
+### Global Flags (client mode)
+- `--host`: Tailbone server host
+- `--port`: Tailbone server port
+
 
 ## Contributing
 
