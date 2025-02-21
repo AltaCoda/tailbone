@@ -83,12 +83,9 @@ func (i *TokenIssuer) loadLatestKey(_ context.Context) (jwk.Key, error) {
 		if !strings.HasSuffix(entry.Name(), ".private.jwk") {
 			continue
 		}
-		// Extract timestamp from key-{timestamp}.private.jwk
-		parts := strings.Split(strings.TrimSuffix(entry.Name(), ".private.jwk"), "-")
-		if len(parts) != 2 {
-			continue
-		}
-		ts, err := utils.ParseCreatedAt(entry.Name())
+		// take ot the private.jwk suffix
+		keyIdPart := strings.TrimSuffix(entry.Name(), ".private.jwk")
+		ts, err := utils.ParseCreatedAt(keyIdPart)
 		if err != nil {
 			continue
 		}
