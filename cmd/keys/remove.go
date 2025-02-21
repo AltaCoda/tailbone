@@ -23,7 +23,6 @@ This will download the current JWKS, remove the specified key, and upload the up
 
 func init() {
 	Cmd.AddCommand(removeCmd)
-	removeCmd.MarkFlagRequired("bucket")
 }
 
 func runRemove(_ *cobra.Command, args []string) error {

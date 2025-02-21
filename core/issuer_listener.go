@@ -53,11 +53,15 @@ func (s *IssuerListener) Start() error {
 	if err != nil {
 		return fmt.Errorf("failed to create local client: %w", err)
 	}
+	port := viper.GetInt("server.port")
+	binding := viper.GetString("server.binding")
 
-	addr := fmt.Sprintf(":%d", viper.GetInt("server.port"))
-	logger.Info().Str("addr", addr).Msg("creating issuer listener")
+	logger.Info().
+		Int("port", port).
+		Str("binding", binding).
+		Msg("creating issuer listener")
 
-	ln, err := s.server.Listen("tcp", addr)
+	ln, err := s.server.Listen("tcp", fmt.Sprintf("%s:%d", binding, port))
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
@@ -127,7 +131,10 @@ func (s *IssuerListener) Start() error {
 	// Start server in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		logger.Info().Str("addr", addr).Msg("starting issuer listener")
+		logger.Info().
+			Int("port", port).
+			Str("binding", binding).
+			Msg("starting issuer listener")
 		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error().Err(err).Msg("server error")
 			errChan <- err

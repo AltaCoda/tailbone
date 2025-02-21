@@ -53,10 +53,14 @@ func (s *AdminListener) Start() error {
 	// Create local client for Tailscale operations
 	var err error
 
-	addr := viper.GetString("admin.address")
-	s.logger.Info().Str("addr", addr).Msg("creating admin listener")
+	port := viper.GetInt("admin.port")
+	binding := viper.GetString("admin.binding")
+	s.logger.Info().
+		Str("binding", binding).
+		Int("port", port).
+		Msg("creating admin listener")
 
-	lis, err := s.server.Listen("tcp", addr)
+	lis, err := s.server.Listen("tcp", fmt.Sprintf("%s:%d", binding, port))
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
@@ -69,7 +73,10 @@ func (s *AdminListener) Start() error {
 		s.grpcServer.GracefulStop()
 	}()
 
-	s.logger.Info().Str("addr", addr).Msg("starting admin listener")
+	s.logger.Info().
+		Str("binding", binding).
+		Int("port", port).
+		Msg("starting admin listener")
 	return s.grpcServer.Serve(lis)
 }
 

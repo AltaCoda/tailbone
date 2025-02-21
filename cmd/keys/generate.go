@@ -18,6 +18,9 @@ var generateCmd = &cobra.Command{
 	Long: `Generate a new RSA key pair for signing JWTs.
 The keys will be saved in JWK format with the key ID and timestamp in the filename.`,
 	RunE: runGenerate,
+	PreRun: func(cmd *cobra.Command, _ []string) {
+		viper.BindPFlag("host", cmd.PersistentFlags().Lookup("host"))
+	},
 }
 
 func init() {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -40,6 +41,11 @@ func init() {
 	// Add commands
 	rootCmd.AddCommand(server.Cmd)
 	rootCmd.AddCommand(keys.Cmd)
+
+	// Set environment variable bindings
+	viper.SetEnvPrefix("TB")
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 }
 
 // initConfig reads in config file and ENV variables if set.
