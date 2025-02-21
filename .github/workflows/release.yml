@@ -64,7 +64,7 @@ jobs:
         mkdir -p dist
         go build -v \
           -ldflags "-X 'utils.Version=${VERSION}' -X 'utils.Commit=${COMMIT}'" \
-          -o "dist/${output_name}" ./cmd/keys
+          -o "dist/${output_name}" 
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
