@@ -2,7 +2,9 @@ package utils
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
@@ -72,6 +74,30 @@ func (t *TsServer) Server() *tsnet.Server {
 	}
 
 	return t.server
+}
+
+func (t *TsServer) LocalIp() (*netip.Addr, error) {
+	if t.server == nil {
+		return nil, fmt.Errorf("server not initialized")
+	}
+
+	timeout := time.After(viper.GetDuration("server.tailscale.joinTimeout"))
+	tick := time.NewTicker(viper.GetDuration("server.tailscale.joinRetry"))
+	defer tick.Stop()
+
+	t.logger.Info().Msg("waiting for valid IP address")
+
+	for {
+		select {
+		case <-timeout:
+			return nil, fmt.Errorf("timed out waiting for valid IP address")
+		case <-tick.C:
+			ip4, _ := t.server.TailscaleIPs()
+			if ip4.IsValid() {
+				return &ip4, nil
+			}
+		}
+	}
 }
 
 var _ IServer = &TsServer{}

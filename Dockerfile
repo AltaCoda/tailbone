@@ -21,7 +21,9 @@ ARG GIT_COMMIT
 ARG VERSION
 
 # Build the application with version information
-RUN go build -ldflags="-X 'utils.Version=${VERSION}' -X 'utils.Commit=${GIT_COMMIT}'" -o /app/tailbone
+RUN go build -v \
+    -ldflags "-X 'utils.Version=${VERSION}' -X 'utils.Commit=${GIT_COMMIT}'" \
+    -o /app/tailbone ./cmd/tailbone
 
 # Final stage
 FROM alpine:3.19
