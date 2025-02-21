@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+option go_package = "github.com/AltaCoda/vdp_pro/backend/proto";
+
+package proto;
+
+
+service AdminService {
+  rpc GenerateNewKeys(GenerateNewKeysRequest) returns (GenerateNewKeysResponse);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  rpc RemoveKey(RemoveKeyRequest) returns (RemoveKeyResponse);
+}
+
+message GenerateNewKeysRequest {
+}
+
+message GenerateNewKeysResponse {
+  string keyId = 1;
+}
+
+message ListKeysRequest {
+}
+
+message ListKeysResponse {
+  repeated KeyInfo keys = 1;
+}
+
+message KeyInfo {
+  string key_id = 1;
+  string algorithm = 2;
+  int64 created_at = 3;  // Unix timestamp
+  string filename = 4;   // Only for local keys
+}
+
+message RemoveKeyRequest {
+  string key_id = 1;
+}
+
+message RemoveKeyResponse {
+}

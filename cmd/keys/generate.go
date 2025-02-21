@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/altacoda/tailbone/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/altacoda/tailbone/proto"
 )
 
 var generateCmd = &cobra.Command{
@@ -26,24 +27,16 @@ func init() {
 func runGenerate(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
-	// Create S3 connector
-	cloudConnector, err := utils.NewS3Connector(ctx)
+	client, err := getAdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create S3 connector: %w", err)
+		return err
 	}
 
-	tokenGenerator := utils.NewTokenGenerator(cloudConnector)
-
-	// Generate the key pair
-	keyPair, err := tokenGenerator.GenerateKeyPair(ctx, viper.GetInt("keys.size"))
+	resp, err := client.GenerateNewKeys(ctx, &proto.GenerateNewKeysRequest{})
 	if err != nil {
-		return fmt.Errorf("failed to generate key pair: %w", err)
+		return fmt.Errorf("failed to generate keys: %w", err)
 	}
 
-	// Save the key pair
-	if err := tokenGenerator.SaveLocally(ctx, keyPair, viper.GetString("keys.dir")); err != nil {
-		return fmt.Errorf("failed to save key pair: %w", err)
-	}
-
+	fmt.Printf("Generated new key pair with ID: %s\n", resp.KeyId)
 	return nil
 }

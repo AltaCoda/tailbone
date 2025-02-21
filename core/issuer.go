@@ -27,11 +27,16 @@ type Issuer interface {
 	VerifyToken(ctx context.Context, tokenString string) (*TokenClaims, error)
 }
 
+// IssuerConfig holds the configuration for the token issuer
+type IssuerConfig struct {
+	KeyDir string // Directory containing the JWK files
+}
+
 // TokenIssuer handles JWT token issuance and verification
 type TokenIssuer struct {
-	keySet    jwk.Set
-	activeKey jwk.Key
-	logger    zerolog.Logger
+	keySet jwk.Set
+	config IssuerConfig
+	logger zerolog.Logger
 }
 
 // TokenClaims represents the custom claims in our JWT
@@ -41,16 +46,35 @@ type TokenClaims struct {
 	DisplayName string `json:"display_name"`
 }
 
-// IssuerConfig holds the configuration for the token issuer
-type IssuerConfig struct {
-	KeyDir string // Directory containing the JWK files
-}
-
 // NewTokenIssuer creates a new JWT issuer with keys loaded from files
 func NewTokenIssuer(ctx context.Context, cfg IssuerConfig) (Issuer, error) {
-	// Find the most recent private key in the directory
-	entries, err := os.ReadDir(cfg.KeyDir)
+	logger := utils.GetLogger("issuer")
+
+	issuer := &TokenIssuer{
+		config: cfg,
+		logger: logger,
+	}
+
+	key, err := issuer.loadLatestKey(ctx)
 	if err != nil {
+		return nil, fmt.Errorf("failed to load latest key: %w", err)
+	}
+
+	if key == nil {
+		logger.Warn().Str("dir", cfg.KeyDir).Msg("no valid key files found in directory. issue function will fail")
+	} else {
+		issuer.keySet = jwk.NewSet()
+	}
+
+	return issuer, nil
+}
+
+func (i *TokenIssuer) loadLatestKey(_ context.Context) (jwk.Key, error) {
+	i.logger.Info().Str("dir", i.config.KeyDir).Msg("loading latest key")
+	// Find the most recent private key in the directory
+	entries, err := os.ReadDir(i.config.KeyDir)
+	if err != nil {
+		i.logger.Error().Err(err).Msg("failed to read key directory")
 		return nil, fmt.Errorf("failed to read key directory: %w", err)
 	}
 
@@ -76,44 +100,53 @@ func NewTokenIssuer(ctx context.Context, cfg IssuerConfig) (Issuer, error) {
 	}
 
 	if latestKey == "" {
-		return nil, fmt.Errorf("no valid key files found in %s", cfg.KeyDir)
+		i.logger.Warn().Str("dir", i.config.KeyDir).Msg("no valid key files found in directory. issue function will fail")
+		return nil, nil
 	}
 
 	// Load the private key
-	keyBytes, err := os.ReadFile(filepath.Join(cfg.KeyDir, latestKey))
+	keyBytes, err := os.ReadFile(filepath.Join(i.config.KeyDir, latestKey))
 	if err != nil {
+		i.logger.Error().Err(err).Str("key", latestKey).Msg("failed to read key file")
 		return nil, fmt.Errorf("failed to read key file: %w", err)
 	}
 
 	key, err := jwk.ParseKey(keyBytes)
 	if err != nil {
+		i.logger.Error().Err(err).Str("key", latestKey).Msg("failed to parse key")
 		return nil, fmt.Errorf("failed to parse key: %w", err)
 	}
 
 	// Create key set
 	keySet := jwk.NewSet()
 	if err := keySet.AddKey(key); err != nil {
+		i.logger.Error().Err(err).Str("key", latestKey).Msg("failed to add key to set")
 		return nil, fmt.Errorf("failed to add key to set: %w", err)
 	}
 
-	return &TokenIssuer{
-		keySet:    keySet,
-		activeKey: key,
-		logger:    utils.GetLogger("issuer"),
-	}, nil
+	return key, nil
 }
 
 // IssueToken creates a new JWT token for a Tailscale user
 func (i *TokenIssuer) IssueToken(ctx context.Context, tailscaleUser, displayName string) (string, error) {
-	logger := i.logger
-	logger.Debug().
+	i.logger.Debug().
 		Str("user", tailscaleUser).
 		Str("display_name", displayName).
 		Msg("issuing new token")
 
+	key, err := i.loadLatestKey(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to load latest key: %w", err)
+	}
+
+	if key == nil {
+		return "", fmt.Errorf("no valid key files found in directory. issue function will fail")
+	}
+
 	// Get the raw private key for signing
 	var privateKey interface{}
-	if err := i.activeKey.Raw(&privateKey); err != nil {
+	if err := key.Raw(&privateKey); err != nil {
+		i.logger.Error().Err(err).Str("key", key.KeyID()).Msg("failed to get raw private key")
 		return "", fmt.Errorf("failed to get raw private key: %w", err)
 	}
 
@@ -132,35 +165,37 @@ func (i *TokenIssuer) IssueToken(ctx context.Context, tailscaleUser, displayName
 
 	// Create the token
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = i.activeKey.KeyID()
+	token.Header["kid"] = key.KeyID()
 
 	// Sign the token
 	signedToken, err := token.SignedString(privateKey)
 	if err != nil {
+		i.logger.Error().Err(err).Str("key", key.KeyID()).Msg("failed to sign token")
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
 
-	logger.Info().
+	i.logger.Info().
 		Str("user", tailscaleUser).
-		Str("kid", i.activeKey.KeyID()).
+		Str("kid", key.KeyID()).
 		Msg("issued new token")
+
+	i.logger.Info().Str("token", signedToken).Msg("issued new token")
 
 	return signedToken, nil
 }
 
 // GetJWKS returns the JSON Web Key Set
 func (i *TokenIssuer) GetJWKS(ctx context.Context) jwk.Set {
-	logger := i.logger
 	publicKeySet := jwk.NewSet()
 	for it := i.keySet.Keys(ctx); it.Next(ctx); {
 		key := it.Pair().Value.(jwk.Key)
 		public, err := jwk.PublicKeyOf(key)
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to get public key")
+			i.logger.Error().Err(err).Str("key", key.KeyID()).Msg("failed to get public key")
 			continue
 		}
 		if err := publicKeySet.AddKey(public); err != nil {
-			logger.Error().Err(err).Msg("failed to add public key to set")
+			i.logger.Error().Err(err).Str("key", key.KeyID()).Msg("failed to add public key to set")
 		}
 	}
 	return publicKeySet
@@ -172,18 +207,21 @@ func (i *TokenIssuer) VerifyToken(ctx context.Context, tokenString string) (*Tok
 		// Get the key ID from the token header
 		kid, ok := token.Header["kid"].(string)
 		if !ok {
+			i.logger.Error().Msg("token has no key ID")
 			return nil, fmt.Errorf("token has no key ID")
 		}
 
 		// Find the key in our key set
 		key, found := i.keySet.LookupKeyID(kid)
 		if !found {
+			i.logger.Error().Str("key", kid).Msg("key not found")
 			return nil, fmt.Errorf("key %s not found", kid)
 		}
 
 		// Get the public key
 		var publicKey interface{}
 		if err := key.Raw(&publicKey); err != nil {
+			i.logger.Error().Err(err).Str("key", kid).Msg("failed to get public key")
 			return nil, fmt.Errorf("failed to get public key: %w", err)
 		}
 
@@ -191,11 +229,13 @@ func (i *TokenIssuer) VerifyToken(ctx context.Context, tokenString string) (*Tok
 	})
 
 	if err != nil {
+		i.logger.Error().Err(err).Msg("failed to parse token")
 		return nil, fmt.Errorf("failed to parse token: %w", err)
 	}
 
 	claims, ok := token.Claims.(*TokenClaims)
 	if !ok || !token.Valid {
+		i.logger.Error().Msg("invalid token")
 		return nil, fmt.Errorf("invalid token")
 	}
 

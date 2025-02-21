@@ -1,8 +1,15 @@
 package keys
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/altacoda/tailbone/proto"
 )
 
 var Cmd = &cobra.Command{
@@ -13,11 +20,17 @@ These commands allow you to generate, upload, and manage signing keys.`,
 }
 
 func init() {
-	Cmd.PersistentFlags().String("dir", "keys", "Directory containing the keys")
-	Cmd.PersistentFlags().String("bucket", "", "S3 bucket for JWKS storage")
-	Cmd.PersistentFlags().String("key-path", ".well-known/jwks.json", "Path/key for the JWKS file in S3")
+	Cmd.PersistentFlags().String("admin-address", "localhost:50051", "Address of the admin server")
 
-	viper.BindPFlag("keys.dir", Cmd.PersistentFlags().Lookup("dir"))
-	viper.BindPFlag("keys.bucket", Cmd.PersistentFlags().Lookup("bucket"))
-	viper.BindPFlag("keys.keyPath", Cmd.PersistentFlags().Lookup("key-path"))
+	viper.BindPFlag("admin.address", Cmd.PersistentFlags().Lookup("admin-address"))
+}
+
+// getAdminClient creates a new gRPC client connection to the admin server
+func getAdminClient(_ context.Context) (proto.AdminServiceClient, error) {
+	conn, err := grpc.Dial(viper.GetString("admin.address"), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to admin server: %w", err)
+	}
+
+	return proto.NewAdminServiceClient(conn), nil
 }

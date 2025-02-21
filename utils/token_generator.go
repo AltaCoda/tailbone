@@ -38,15 +38,17 @@ type TokenGenerator interface {
 
 // tokenGenerator implements the TokenGenerator interface
 type tokenGenerator struct {
-	logger         zerolog.Logger
-	cloudConnector CloudConnector
+	logger          zerolog.Logger
+	cloudConnector  CloudConnector
+	localKeyStorage ILocalKeyStorage
 }
 
 // NewTokenGenerator creates a new instance of TokenGenerator
-func NewTokenGenerator(cloudConnector CloudConnector) TokenGenerator {
+func NewTokenGenerator(cloudConnector CloudConnector, localKeyStorage ILocalKeyStorage) TokenGenerator {
 	return &tokenGenerator{
-		logger:         GetLogger("token_generator"),
-		cloudConnector: cloudConnector,
+		logger:          GetLogger("token_generator"),
+		cloudConnector:  cloudConnector,
+		localKeyStorage: localKeyStorage,
 	}
 }
 
@@ -90,35 +92,30 @@ func (t *tokenGenerator) GenerateKeyPair(ctx context.Context, keySize int) (*Key
 
 // SaveLocally saves the key pair to files in the specified directory
 func (t *tokenGenerator) SaveLocally(ctx context.Context, kp *KeyPair, keyDir string) error {
-	// Create key directory if it doesn't exist
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
-		return fmt.Errorf("failed to create key directory: %w", err)
+	// Create JWKS with the public key
+	jwks := &JWKS{
+		Keys: []jwk.Key{kp.PublicKey},
 	}
 
-	// Save private key
-	privPath := filepath.Join(keyDir, fmt.Sprintf("%s.private.jwk", kp.KeyID))
+	// Save public key using local storage
+	if err := t.localKeyStorage.SaveLocalJWKs(ctx, jwks); err != nil {
+		return fmt.Errorf("failed to save public key: %w", err)
+	}
+
+	// Save private key separately
 	privBytes, err := json.MarshalIndent(kp.PrivateKey, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal private key: %w", err)
 	}
+
+	privPath := filepath.Join(keyDir, fmt.Sprintf("%s.private.jwk", kp.KeyID))
 	if err := os.WriteFile(privPath, privBytes, 0600); err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
-	}
-
-	// Save public key
-	pubPath := filepath.Join(keyDir, fmt.Sprintf("%s.public.jwk", kp.KeyID))
-	pubBytes, err := json.MarshalIndent(kp.PublicKey, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal public key: %w", err)
-	}
-	if err := os.WriteFile(pubPath, pubBytes, 0644); err != nil {
-		return fmt.Errorf("failed to write public key: %w", err)
 	}
 
 	t.logger.Info().
 		Str("kid", kp.KeyID).
 		Str("private_key", privPath).
-		Str("public_key", pubPath).
 		Msg("saved key pair")
 
 	return nil

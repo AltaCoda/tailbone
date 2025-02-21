@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,17 +16,66 @@ import (
 
 // runStart implements the server start command
 func runStart(cmd *cobra.Command, args []string) error {
-	// Initialize global logger
+	// Bind flags to viper
+	viper.BindPFlag("server.port", cmd.Flags().Lookup("port"))
+	viper.BindPFlag("server.host", cmd.Flags().Lookup("host"))
+	viper.BindPFlag("server.tailscale.authkey", cmd.Flags().Lookup("ts-authkey"))
+	viper.BindPFlag("log.level", cmd.Flags().Lookup("log-level"))
+	viper.BindPFlag("log.format", cmd.Flags().Lookup("log-format"))
+	viper.BindPFlag("keys.dir", cmd.Flags().Lookup("dir"))
+	viper.BindPFlag("keys.issuer", cmd.Flags().Lookup("issuer"))
+	viper.BindPFlag("keys.expiry", cmd.Flags().Lookup("expiry"))
+	viper.BindPFlag("keys.bucket", cmd.Flags().Lookup("bucket"))
+	viper.BindPFlag("keys.keyPath", cmd.Flags().Lookup("key-path"))
+	viper.BindPFlag("server.tailscale.dir", cmd.Flags().Lookup("ts-dir"))
+	viper.BindPFlag("server.tailscale.hostname", cmd.Flags().Lookup("ts-hostname"))
+	viper.BindPFlag("admin.address", cmd.Flags().Lookup("admin-address"))
+	viper.BindPFlag("components", cmd.Flags().Lookup("components"))
+
 	utils.InitLogger()
 	logger := utils.GetLogger("server")
 
-	srv, err := core.NewServer()
-	if err != nil {
-		return fmt.Errorf("failed to create server: %w", err)
+	ctx := context.Background()
+	logger.Info().Msg("starting tailbone server")
+
+	var servers []utils.IServer
+	components := viper.GetStringSlice("components")
+
+	if slices.Contains(components, "issuer") {
+		srv, err := core.NewServer()
+		if err != nil {
+			return fmt.Errorf("failed to create server: %w", err)
+		}
+		go func() {
+			if err := srv.Start(); err != nil {
+				logger.Error().Err(err).Msg("issuer server error")
+			}
+		}()
+		servers = append(servers, srv)
 	}
 
-	logger.Info().Msg("starting tailbone server")
-	return srv.Start()
+	if slices.Contains(components, "admin") {
+		adminSrv, err := core.NewAdminServer(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create admin server: %w", err)
+		}
+		go func() {
+			if err := adminSrv.Start(); err != nil {
+				logger.Error().Err(err).Msg("admin server error")
+			}
+		}()
+		servers = append(servers, adminSrv)
+	}
+
+	utils.WaitForSignal()
+	logger.Info().Msg("shutting down servers")
+
+	// Stop all servers
+	for _, srv := range servers {
+		srv.Stop()
+	}
+
+	return nil
 }
 
 var startCmd = &cobra.Command{
@@ -48,17 +99,10 @@ func init() {
 	startCmd.Flags().Duration("expiry", 20*time.Minute, "Token expiry duration")
 	startCmd.Flags().String("ts-dir", ".tsnet", "Tailscale state directory")
 	startCmd.Flags().String("ts-hostname", "tailbone", "Tailscale hostname")
-	// Bind flags to viper
-	viper.BindPFlag("server.port", startCmd.Flags().Lookup("port"))
-	viper.BindPFlag("server.host", startCmd.Flags().Lookup("host"))
-	viper.BindPFlag("server.tailscale.authkey", startCmd.Flags().Lookup("ts-authkey"))
-	viper.BindPFlag("log.level", startCmd.Flags().Lookup("log-level"))
-	viper.BindPFlag("log.format", startCmd.Flags().Lookup("log-format"))
-	viper.BindPFlag("keys.dir", startCmd.Flags().Lookup("dir"))
-	viper.BindPFlag("keys.issuer", startCmd.Flags().Lookup("issuer"))
-	viper.BindPFlag("keys.expiry", startCmd.Flags().Lookup("expiry"))
-	viper.BindPFlag("server.tailscale.dir", startCmd.Flags().Lookup("ts-dir"))
-	viper.BindPFlag("server.tailscale.hostname", startCmd.Flags().Lookup("ts-hostname"))
+	startCmd.Flags().String("admin-address", "localhost:50051", "Address of the admin server")
+	startCmd.Flags().StringSlice("components", []string{"issuer", "admin"}, "Components to start")
+	startCmd.Flags().String("bucket", "", "S3 bucket for JWKS storage")
+	startCmd.Flags().String("key-path", ".well-known/jwks.json", "Path/key for the JWKS file in S3")
 
 	// Set environment variable bindings
 	viper.SetEnvPrefix("TB")

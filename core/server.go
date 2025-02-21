@@ -10,16 +10,18 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
+	"tailscale.com/client/tailscale"
 	"tailscale.com/tsnet"
 
 	"github.com/altacoda/tailbone/utils"
 )
 
 type Server struct {
-	server utils.IServer
-	client utils.IClient
+	server *tsnet.Server
+	client *tailscale.LocalClient
 	issuer Issuer
 	logger zerolog.Logger
+	done   chan struct{}
 }
 
 func NewServer() (*Server, error) {
@@ -36,6 +38,7 @@ func NewServer() (*Server, error) {
 	return &Server{
 		issuer: issuer,
 		logger: logger,
+		done:   make(chan struct{}),
 	}, nil
 }
 
@@ -63,11 +66,12 @@ func (s *Server) Start() error {
 	tsLogger := utils.GetLogger("tsnet")
 
 	s.server = &tsnet.Server{
-		Hostname: viper.GetString("server.tailscale.hostname"),
-		AuthKey:  viper.GetString("server.tailscale.authkey"),
-		Logf:     func(msg string, v ...interface{}) { tsLogger.Trace().Msgf(msg, v...) },
-		UserLogf: func(msg string, v ...interface{}) { tsLogger.Debug().Msgf(msg, v...) },
-		Dir:      viper.GetString("server.tailscale.dir"),
+		Hostname:  viper.GetString("server.tailscale.hostname"),
+		AuthKey:   viper.GetString("server.tailscale.authkey"),
+		Logf:      func(msg string, v ...interface{}) { tsLogger.Trace().Msgf(msg, v...) },
+		UserLogf:  func(msg string, v ...interface{}) { tsLogger.Debug().Msgf(msg, v...) },
+		Dir:       viper.GetString("server.tailscale.dir"),
+		Ephemeral: true,
 	}
 
 	// Create local client for Tailscale operations
@@ -183,3 +187,9 @@ func (s *Server) Start() error {
 	logger.Info().Msg("server shutdown complete")
 	return nil
 }
+
+func (s *Server) Stop() {
+	close(s.done)
+}
+
+var _ utils.IServer = &Server{}

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/altacoda/tailbone/utils"
+	"github.com/altacoda/tailbone/proto"
 )
 
 var removeCmd = &cobra.Command{
@@ -27,31 +27,18 @@ func runRemove(_ *cobra.Command, args []string) error {
 	ctx := context.Background()
 	keyID := args[0]
 
-	cloudConnector, err := utils.NewS3Connector(ctx)
+	client, err := getAdminClient(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create S3 connector: %w", err)
+		return err
 	}
 
-	tokenGenerator := utils.NewTokenGenerator(cloudConnector)
-
-	bucket, keyPath, err := cloudConnector.GetBucketAndKeyPath(ctx)
+	_, err = client.RemoveKey(ctx, &proto.RemoveKeyRequest{
+		KeyId: keyID,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get bucket and key path: %w", err)
+		return fmt.Errorf("failed to remove key: %w", err)
 	}
 
-	// Download existing JWKS
-	jwks, err := tokenGenerator.DownloadJWKS(ctx, bucket, keyPath)
-	if err != nil {
-		return fmt.Errorf("failed to download JWKS: %w", err)
-	}
-
-	// Remove the specified key
-	updatedJWKS := tokenGenerator.RemoveKeyFromJWKS(jwks, keyID)
-
-	// Upload the updated JWKS back to S3
-	if err := tokenGenerator.UploadPublicKey(ctx, updatedJWKS, bucket, keyPath); err != nil {
-		return fmt.Errorf("failed to upload updated JWKS: %w", err)
-	}
-
+	fmt.Printf("Successfully removed key %s from JWKS\n", keyID)
 	return nil
 }
