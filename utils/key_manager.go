@@ -14,38 +14,26 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// KeyPair represents a generated key pair with metadata
-type KeyPair struct {
-	PrivateKey jwk.Key
-	PublicKey  jwk.Key
-	KeyID      string
-}
-
-// JWKS represents a JSON Web Key Set
-type JWKS struct {
-	Keys []jwk.Key `json:"keys"`
-}
-
-// TokenGenerator interface defines the methods for managing JWT keys
-type TokenGenerator interface {
+// IKeyManager interface defines the methods for managing JWT keys
+type IKeyManager interface {
 	GenerateKeyPair(ctx context.Context, keySize int) (*KeyPair, error)
 	SaveLocally(ctx context.Context, kp *KeyPair, keyDir string) error
 	UploadPublicKey(ctx context.Context, jwks *JWKS, bucket, keyPath string) error
 	DownloadJWKS(ctx context.Context, bucket, keyPath string) (*JWKS, error)
-	RemoveKeyFromJWKS(jwks *JWKS, keyID string) *JWKS
+	RemoveKeyFromJWKS(jwks *JWKS, keyID string) (*JWKS, error)
 	ParseJWKS(ctx context.Context, data []byte) (*JWKS, error)
 }
 
-// tokenGenerator implements the TokenGenerator interface
-type tokenGenerator struct {
+// keyManager implements the IKeyManager interface
+type keyManager struct {
 	logger          zerolog.Logger
 	cloudConnector  CloudConnector
 	localKeyStorage ILocalKeyStorage
 }
 
-// NewTokenGenerator creates a new instance of TokenGenerator
-func NewTokenGenerator(cloudConnector CloudConnector, localKeyStorage ILocalKeyStorage) TokenGenerator {
-	return &tokenGenerator{
+// NewKeyManager creates a new instance of IKeyManager
+func NewKeyManager(cloudConnector CloudConnector, localKeyStorage ILocalKeyStorage) IKeyManager {
+	return &keyManager{
 		logger:          GetLogger("token_generator"),
 		cloudConnector:  cloudConnector,
 		localKeyStorage: localKeyStorage,
@@ -53,7 +41,7 @@ func NewTokenGenerator(cloudConnector CloudConnector, localKeyStorage ILocalKeyS
 }
 
 // GenerateKeyPair creates a new RSA key pair with the specified size
-func (t *tokenGenerator) GenerateKeyPair(ctx context.Context, keySize int) (*KeyPair, error) {
+func (t *keyManager) GenerateKeyPair(ctx context.Context, keySize int) (*KeyPair, error) {
 	// Generate a new RSA key
 	privateKey, err := rsa.GenerateKey(rand.Reader, keySize)
 	if err != nil {
@@ -67,7 +55,7 @@ func (t *tokenGenerator) GenerateKeyPair(ctx context.Context, keySize int) (*Key
 	}
 
 	// Set key metadata
-	kid := fmt.Sprintf("key-%d", time.Now().Unix())
+	kid := GetKeyId(time.Now())
 	if err := key.Set(jwk.KeyIDKey, kid); err != nil {
 		return nil, fmt.Errorf("failed to set key ID: %w", err)
 	}
@@ -91,7 +79,7 @@ func (t *tokenGenerator) GenerateKeyPair(ctx context.Context, keySize int) (*Key
 }
 
 // SaveLocally saves the key pair to files in the specified directory
-func (t *tokenGenerator) SaveLocally(ctx context.Context, kp *KeyPair, keyDir string) error {
+func (t *keyManager) SaveLocally(ctx context.Context, kp *KeyPair, keyDir string) error {
 	// Create JWKS with the public key
 	jwks := &JWKS{
 		Keys: []jwk.Key{kp.PublicKey},
@@ -122,7 +110,7 @@ func (t *tokenGenerator) SaveLocally(ctx context.Context, kp *KeyPair, keyDir st
 }
 
 // UploadPublicKey uploads the JWKS to the specified S3 bucket
-func (t *tokenGenerator) UploadPublicKey(ctx context.Context, jwks *JWKS, bucket, keyPath string) error {
+func (t *keyManager) UploadPublicKey(ctx context.Context, jwks *JWKS, bucket, keyPath string) error {
 	jwksBytes, err := json.Marshal(jwks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal JWKS: %w", err)
@@ -143,7 +131,7 @@ func (t *tokenGenerator) UploadPublicKey(ctx context.Context, jwks *JWKS, bucket
 }
 
 // DownloadJWKS downloads and parses a JWKS from a given URL
-func (t *tokenGenerator) DownloadJWKS(ctx context.Context, bucket, keyPath string) (*JWKS, error) {
+func (t *keyManager) DownloadJWKS(ctx context.Context, bucket, keyPath string) (*JWKS, error) {
 	data, err := t.cloudConnector.Download(ctx, bucket, keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download JWKS: %w", err)
@@ -153,7 +141,7 @@ func (t *tokenGenerator) DownloadJWKS(ctx context.Context, bucket, keyPath strin
 }
 
 // RemoveKeyFromJWKS removes a key from the JWKS by its ID and returns the updated JWKS
-func (t *tokenGenerator) RemoveKeyFromJWKS(jwks *JWKS, keyID string) *JWKS {
+func (t *keyManager) RemoveKeyFromJWKS(jwks *JWKS, keyID string) (*JWKS, error) {
 	// Create new slice for remaining keys
 	remainingKeys := make([]jwk.Key, 0, len(jwks.Keys))
 	removed := false
@@ -177,14 +165,16 @@ func (t *tokenGenerator) RemoveKeyFromJWKS(jwks *JWKS, keyID string) *JWKS {
 		t.logger.Warn().
 			Str("kid", keyID).
 			Msg("key not found in JWKS")
+
+		return jwks, fmt.Errorf("key %s not found", keyID)
 	}
 
 	return &JWKS{
 		Keys: remainingKeys,
-	}
+	}, nil
 }
 
-func (t *tokenGenerator) ParseJWKS(ctx context.Context, data []byte) (*JWKS, error) {
+func (t *keyManager) ParseJWKS(ctx context.Context, data []byte) (*JWKS, error) {
 	set, err := jwk.Parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JWKS: %w", err)

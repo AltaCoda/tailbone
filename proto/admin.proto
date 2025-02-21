@@ -11,25 +11,24 @@ service AdminService {
   rpc RemoveKey(RemoveKeyRequest) returns (RemoveKeyResponse);
 }
 
+message Key {
+  string key_id = 1;
+  string algorithm = 2;
+  int64 created_at = 4;  // Unix timestamp
+}
+
 message GenerateNewKeysRequest {
 }
 
 message GenerateNewKeysResponse {
-  string keyId = 1;
+  Key key = 1;
 }
 
 message ListKeysRequest {
 }
 
 message ListKeysResponse {
-  repeated KeyInfo keys = 1;
-}
-
-message KeyInfo {
-  string key_id = 1;
-  string algorithm = 2;
-  int64 created_at = 3;  // Unix timestamp
-  string filename = 4;   // Only for local keys
+  repeated Key keys = 1;
 }
 
 message RemoveKeyRequest {
@@ -37,4 +36,5 @@ message RemoveKeyRequest {
 }
 
 message RemoveKeyResponse {
+  repeated Key keys = 1;
 }

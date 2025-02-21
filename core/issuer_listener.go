@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
@@ -16,17 +15,17 @@ import (
 	"github.com/altacoda/tailbone/utils"
 )
 
-type Server struct {
-	server *tsnet.Server
+type IssuerListener struct {
 	client *tailscale.LocalClient
+	server *tsnet.Server
 	issuer Issuer
 	logger zerolog.Logger
 	done   chan struct{}
 }
 
-func NewServer() (*Server, error) {
+func NewIssuerListener(tsServer *tsnet.Server) (*IssuerListener, error) {
 	// Configure global logger
-	logger := utils.GetLogger("server")
+	logger := utils.GetLogger("issuer-listener")
 
 	issuer, err := NewTokenIssuer(context.Background(), IssuerConfig{
 		KeyDir: viper.GetString("keys.dir"),
@@ -35,44 +34,18 @@ func NewServer() (*Server, error) {
 		return nil, fmt.Errorf("failed to create token issuer: %w", err)
 	}
 
-	return &Server{
+	return &IssuerListener{
 		issuer: issuer,
 		logger: logger,
+		server: tsServer,
 		done:   make(chan struct{}),
 	}, nil
 }
 
-func (s *Server) Start() error {
+func (s *IssuerListener) Start() error {
 	logger := s.logger
-	logger.Info().Msg("initializing tailscale server")
-
-	if viper.GetString("server.tailscale.authkey") == "" {
-		return fmt.Errorf("tailscale auth key is not set")
-	}
-
-	if viper.GetString("server.tailscale.dir") == "" {
-		return fmt.Errorf("tailscale state directory is not set")
-	}
-
-	if viper.GetString("server.tailscale.hostname") == "" {
-		return fmt.Errorf("tailscale hostname is not set")
-	}
-
-	// if tsdir does not exist, create it
-	if _, err := os.Stat(viper.GetString("server.tailscale.dir")); os.IsNotExist(err) {
-		os.MkdirAll(viper.GetString("server.tailscale.dir"), 0755)
-	}
-
-	tsLogger := utils.GetLogger("tsnet")
-
-	s.server = &tsnet.Server{
-		Hostname:  viper.GetString("server.tailscale.hostname"),
-		AuthKey:   viper.GetString("server.tailscale.authkey"),
-		Logf:      func(msg string, v ...interface{}) { tsLogger.Trace().Msgf(msg, v...) },
-		UserLogf:  func(msg string, v ...interface{}) { tsLogger.Debug().Msgf(msg, v...) },
-		Dir:       viper.GetString("server.tailscale.dir"),
-		Ephemeral: true,
-	}
+	logger.Info().Msg("initializing issuer listener")
+	ctx := context.Background()
 
 	// Create local client for Tailscale operations
 	var err error
@@ -82,22 +55,14 @@ func (s *Server) Start() error {
 	}
 
 	addr := fmt.Sprintf(":%d", viper.GetInt("server.port"))
-	logger.Info().Str("addr", addr).Msg("creating listener")
+	logger.Info().Str("addr", addr).Msg("creating issuer listener")
 
 	ln, err := s.server.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create signal handler for graceful shutdown
-	go func() {
-		utils.WaitForSignal()
-		logger.Info().Msg("received shutdown signal")
-		cancel()
-	}()
-
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Create HTTP server
@@ -162,7 +127,7 @@ func (s *Server) Start() error {
 	// Start server in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		logger.Info().Str("addr", addr).Msg("starting server")
+		logger.Info().Str("addr", addr).Msg("starting issuer listener")
 		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error().Err(err).Msg("server error")
 			errChan <- err
@@ -175,7 +140,7 @@ func (s *Server) Start() error {
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		logger.Info().Msg("shutting down server")
+		logger.Info().Msg("shutting down issuer listener")
 
 		// Shutdown server gracefully
 		if err := server.Shutdown(context.Background()); err != nil {
@@ -184,12 +149,13 @@ func (s *Server) Start() error {
 		}
 	}
 
-	logger.Info().Msg("server shutdown complete")
+	logger.Info().Msg("issuer listener shutdown complete")
 	return nil
 }
 
-func (s *Server) Stop() {
+func (s *IssuerListener) Stop() {
+	s.logger.Info().Msg("stopping issuer listener")
 	close(s.done)
 }
 
-var _ utils.IServer = &Server{}
+var _ utils.IServer = &IssuerListener{}

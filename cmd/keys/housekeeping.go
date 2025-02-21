@@ -3,9 +3,10 @@ package keys
 import (
 	"context"
 
-	"github.com/altacoda/tailbone/core"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/altacoda/tailbone/core"
 )
 
 var housekeepingCmd = &cobra.Command{

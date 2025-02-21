@@ -3,10 +3,13 @@ package keys
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 
 	"github.com/altacoda/tailbone/proto"
+	"github.com/altacoda/tailbone/utils"
 )
 
 var removeCmd = &cobra.Command{
@@ -32,13 +35,22 @@ func runRemove(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	_, err = client.RemoveKey(ctx, &proto.RemoveKeyRequest{
+	resp, err := client.RemoveKey(ctx, &proto.RemoveKeyRequest{
 		KeyId: keyID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to remove key: %w", err)
 	}
 
-	fmt.Printf("Successfully removed key %s from JWKS\n", keyID)
-	return nil
+	out := utils.OutData{
+		Headers: table.Row{"KeyId", "Algorithm", "Created"},
+		Rows:    []table.Row{},
+	}
+
+	for _, key := range resp.Keys {
+		out.Rows = append(out.Rows, table.Row{key.KeyId, key.Algorithm, time.Unix(key.CreatedAt, 0).Format(time.RFC3339)})
+		out.RawData = append(out.RawData, key)
+	}
+
+	return utils.Print(out)
 }

@@ -41,39 +41,55 @@ func runStart(cmd *cobra.Command, args []string) error {
 	var servers []utils.IServer
 	components := viper.GetStringSlice("components")
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	tsServer := utils.NewTsServer()
+	err := tsServer.Start()
+	if err != nil {
+		return fmt.Errorf("failed to start Tailscale server: %w", err)
+	}
+
 	if slices.Contains(components, "issuer") {
-		srv, err := core.NewServer()
+		srv, err := core.NewIssuerListener(tsServer.Server())
 		if err != nil {
-			return fmt.Errorf("failed to create server: %w", err)
+			return fmt.Errorf("failed to create issuer listener: %w", err)
 		}
 		go func() {
 			if err := srv.Start(); err != nil {
-				logger.Error().Err(err).Msg("issuer server error")
+				logger.Error().Err(err).Msg("issuer listener error")
+				cancel()
+				return
 			}
 		}()
 		servers = append(servers, srv)
 	}
 
 	if slices.Contains(components, "admin") {
-		adminSrv, err := core.NewAdminServer(ctx)
+		adminSrv, err := core.NewAdminListener(ctx, tsServer.Server())
 		if err != nil {
-			return fmt.Errorf("failed to create admin server: %w", err)
+			return fmt.Errorf("failed to create admin listener: %w", err)
 		}
 		go func() {
 			if err := adminSrv.Start(); err != nil {
-				logger.Error().Err(err).Msg("admin server error")
+				logger.Error().Err(err).Msg("admin listener error")
+				cancel()
+				return
 			}
 		}()
 		servers = append(servers, adminSrv)
 	}
 
-	utils.WaitForSignal()
-	logger.Info().Msg("shutting down servers")
+	utils.WaitForSignal(ctx)
+	logger.Info().Msg("shutting down listeners")
 
 	// Stop all servers
 	for _, srv := range servers {
 		srv.Stop()
 	}
+
+	logger.Info().Msg("shutting down Tailscale server")
+	tsServer.Stop()
 
 	return nil
 }
@@ -88,7 +104,7 @@ using Tailscale for user verification.`,
 
 func init() {
 	Cmd.AddCommand(startCmd)
-	// Server flags
+	// IssuerListener flags
 	startCmd.Flags().IntP("port", "p", 80, "Port to run the server on")
 	startCmd.Flags().StringP("host", "H", "0.0.0.0", "Host address to bind to")
 	startCmd.Flags().String("ts-authkey", "", "Tailscale auth key")
@@ -99,7 +115,7 @@ func init() {
 	startCmd.Flags().Duration("expiry", 20*time.Minute, "Token expiry duration")
 	startCmd.Flags().String("ts-dir", ".tsnet", "Tailscale state directory")
 	startCmd.Flags().String("ts-hostname", "tailbone", "Tailscale hostname")
-	startCmd.Flags().String("admin-address", "localhost:50051", "Address of the admin server")
+	startCmd.Flags().String("admin-address", ":50051", "Address of the admin server")
 	startCmd.Flags().StringSlice("components", []string{"issuer", "admin"}, "Components to start")
 	startCmd.Flags().String("bucket", "", "S3 bucket for JWKS storage")
 	startCmd.Flags().String("key-path", ".well-known/jwks.json", "Path/key for the JWKS file in S3")
@@ -107,5 +123,5 @@ func init() {
 	// Set environment variable bindings
 	viper.SetEnvPrefix("TB")
 	viper.AutomaticEnv()
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 }

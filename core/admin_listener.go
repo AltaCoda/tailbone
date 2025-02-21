@@ -3,22 +3,21 @@ package core
 import (
 	"context"
 	"fmt"
-	"net"
-	"strconv"
-	"strings"
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
+	"tailscale.com/tsnet"
 
 	"github.com/altacoda/tailbone/proto"
 	"github.com/altacoda/tailbone/utils"
 )
 
-// AdminServer implements the AdminServiceServer interface
-type AdminServer struct {
+// AdminListener implements the AdminServiceServer interface
+type AdminListener struct {
 	proto.UnimplementedAdminServiceServer
+	server          *tsnet.Server
 	cloudConnector  utils.CloudConnector
 	localKeyStorage utils.ILocalKeyStorage
 	grpcServer      *grpc.Server
@@ -26,11 +25,11 @@ type AdminServer struct {
 	done            chan struct{}
 }
 
-// NewAdminServer creates a new instance of AdminServer
-func NewAdminServer(ctx context.Context) (*AdminServer, error) {
+// NewAdminListener creates a new instance of AdminListener
+func NewAdminListener(ctx context.Context, tsServer *tsnet.Server) (*AdminListener, error) {
 	// Configure logger
-	logger := utils.GetLogger("admin-server")
-	logger.Info().Msg("initializing admin server")
+	logger := utils.GetLogger("admin-listener")
+	logger.Info().Msg("initializing admin listener")
 
 	// Create S3 connector
 	cloudConnector, err := utils.NewS3Connector(ctx)
@@ -40,22 +39,26 @@ func NewAdminServer(ctx context.Context) (*AdminServer, error) {
 
 	localKeyStorage := utils.NewLocalKeyStorage()
 
-	return &AdminServer{
+	return &AdminListener{
 		cloudConnector:  cloudConnector,
 		localKeyStorage: localKeyStorage,
 		grpcServer:      grpc.NewServer(),
 		logger:          logger,
+		server:          tsServer,
 		done:            make(chan struct{}),
 	}, nil
 }
 
-func (s *AdminServer) Start() error {
-	addr := viper.GetString("admin.address")
-	s.logger.Info().Str("addr", addr).Msg("creating listener")
+func (s *AdminListener) Start() error {
+	// Create local client for Tailscale operations
+	var err error
 
-	lis, err := net.Listen("tcp", addr)
+	addr := viper.GetString("admin.address")
+	s.logger.Info().Str("addr", addr).Msg("creating admin listener")
+
+	lis, err := s.server.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen: %w", err)
+		return fmt.Errorf("failed to create listener: %w", err)
 	}
 
 	proto.RegisterAdminServiceServer(s.grpcServer, s)
@@ -66,19 +69,19 @@ func (s *AdminServer) Start() error {
 		s.grpcServer.GracefulStop()
 	}()
 
-	s.logger.Info().Str("addr", addr).Msg("starting admin server")
+	s.logger.Info().Str("addr", addr).Msg("starting admin listener")
 	return s.grpcServer.Serve(lis)
 }
 
-func (s *AdminServer) Stop() {
-	s.logger.Info().Msg("stopping admin server")
+func (s *AdminListener) Stop() {
+	s.logger.Info().Msg("stopping admin listener")
 	close(s.done)
 }
 
 // GenerateNewKeys implements the GenerateNewKeys RPC method
-func (s *AdminServer) GenerateNewKeys(ctx context.Context, req *proto.GenerateNewKeysRequest) (*proto.GenerateNewKeysResponse, error) {
+func (s *AdminListener) GenerateNewKeys(ctx context.Context, req *proto.GenerateNewKeysRequest) (*proto.GenerateNewKeysResponse, error) {
 	s.logger.Info().Msg("generating new key pair")
-	tokenGenerator := utils.NewTokenGenerator(s.cloudConnector, s.localKeyStorage)
+	tokenGenerator := utils.NewKeyManager(s.cloudConnector, s.localKeyStorage)
 
 	// Generate the key pair
 	keyPair, err := tokenGenerator.GenerateKeyPair(ctx, viper.GetInt("keys.size"))
@@ -140,18 +143,22 @@ func (s *AdminServer) GenerateNewKeys(ctx context.Context, req *proto.GenerateNe
 	s.logger.Info().Str("key_id", keyPair.KeyID).Msg("successfully generated and stored new key pair")
 
 	return &proto.GenerateNewKeysResponse{
-		KeyId: keyPair.KeyID,
+		Key: &proto.Key{
+			KeyId:     keyPair.KeyID,
+			Algorithm: keyPair.PublicKey.Algorithm().String(),
+			CreatedAt: keyPair.CreatedAt().Unix(),
+		},
 	}, nil
 }
 
 // ListKeys implements the ListKeys RPC method
-func (s *AdminServer) ListKeys(ctx context.Context, req *proto.ListKeysRequest) (*proto.ListKeysResponse, error) {
+func (s *AdminListener) ListKeys(ctx context.Context, req *proto.ListKeysRequest) (*proto.ListKeysResponse, error) {
 	s.logger.Info().Msg("listing keys")
 	return s.listRemoteKeys(ctx)
 }
 
-func (s *AdminServer) listRemoteKeys(ctx context.Context) (*proto.ListKeysResponse, error) {
-	tokenGenerator := utils.NewTokenGenerator(s.cloudConnector, s.localKeyStorage)
+func (s *AdminListener) listRemoteKeys(ctx context.Context) (*proto.ListKeysResponse, error) {
+	tokenGenerator := utils.NewKeyManager(s.cloudConnector, s.localKeyStorage)
 
 	// Check if we have S3 bucket configured
 	if viper.GetString("keys.bucket") == "" {
@@ -173,20 +180,20 @@ func (s *AdminServer) listRemoteKeys(ctx context.Context) (*proto.ListKeysRespon
 		return nil, err
 	}
 
-	var keys []*proto.KeyInfo
+	var keys []*proto.Key
 
 	for _, key := range jwks.Keys {
-		keyInfo := &proto.KeyInfo{}
+		keyInfo := &proto.Key{}
 
 		// Extract key metadata
 		if kid, ok := key.Get(jwk.KeyIDKey); ok {
 			keyInfo.KeyId = kid.(string)
-			// Extract timestamp from key ID (assuming format "key-{timestamp}")
-			if parts := strings.Split(keyInfo.KeyId, "-"); len(parts) > 1 {
-				if ts, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-					keyInfo.CreatedAt = ts
-				}
+			ts, err := utils.ParseCreatedAt(keyInfo.KeyId)
+			if err != nil {
+				s.logger.Error().Err(err).Str("key_id", keyInfo.KeyId).Msg("failed to parse key ID")
+				return nil, fmt.Errorf("failed to parse key ID: %w", err)
 			}
+			keyInfo.CreatedAt = ts.Unix()
 		}
 
 		keyInfo.Algorithm = key.Algorithm().String()
@@ -201,9 +208,9 @@ func (s *AdminServer) listRemoteKeys(ctx context.Context) (*proto.ListKeysRespon
 }
 
 // RemoveKey implements the RemoveKey RPC method
-func (s *AdminServer) RemoveKey(ctx context.Context, req *proto.RemoveKeyRequest) (*proto.RemoveKeyResponse, error) {
+func (s *AdminListener) RemoveKey(ctx context.Context, req *proto.RemoveKeyRequest) (*proto.RemoveKeyResponse, error) {
 	s.logger.Info().Str("key_id", req.KeyId).Msg("removing key")
-	tokenGenerator := utils.NewTokenGenerator(s.cloudConnector, s.localKeyStorage)
+	tokenGenerator := utils.NewKeyManager(s.cloudConnector, s.localKeyStorage)
 	localKeyStorage := utils.NewLocalKeyStorage()
 
 	bucket, keyPath, err := s.cloudConnector.GetBucketAndKeyPath(ctx)
@@ -220,7 +227,11 @@ func (s *AdminServer) RemoveKey(ctx context.Context, req *proto.RemoveKeyRequest
 	}
 
 	// Remove the specified key
-	updatedJWKS := tokenGenerator.RemoveKeyFromJWKS(jwks, req.KeyId)
+	updatedJWKS, err := tokenGenerator.RemoveKeyFromJWKS(jwks, req.KeyId)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to remove key from JWKS")
+		return nil, fmt.Errorf("failed to remove key from JWKS: %w", err)
+	}
 
 	// Upload the updated JWKS back to S3
 	if err := tokenGenerator.UploadPublicKey(ctx, updatedJWKS, bucket, keyPath); err != nil {
@@ -235,7 +246,30 @@ func (s *AdminServer) RemoveKey(ctx context.Context, req *proto.RemoveKeyRequest
 	}
 
 	s.logger.Info().Str("key_id", req.KeyId).Msg("successfully removed key")
-	return &proto.RemoveKeyResponse{}, nil
+
+	var keys []*proto.Key
+	for _, key := range updatedJWKS.Keys {
+		keyInfo := &proto.Key{}
+
+		// Extract key metadata
+		if kid, ok := key.Get(jwk.KeyIDKey); ok {
+			keyInfo.KeyId = kid.(string)
+			ts, err := utils.ParseCreatedAt(keyInfo.KeyId)
+			if err != nil {
+				s.logger.Error().Err(err).Str("key_id", keyInfo.KeyId).Msg("failed to parse key ID")
+				return nil, fmt.Errorf("failed to parse key ID: %w", err)
+			}
+			keyInfo.CreatedAt = ts.Unix()
+		}
+
+		keyInfo.Algorithm = key.Algorithm().String()
+
+		keys = append(keys, keyInfo)
+	}
+
+	return &proto.RemoveKeyResponse{
+		Keys: keys,
+	}, nil
 }
 
-var _ utils.IServer = &AdminServer{}
+var _ utils.IServer = &AdminListener{}

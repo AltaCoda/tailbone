@@ -10,7 +10,7 @@ import (
 type HouseKeeper struct {
 	logger          zerolog.Logger
 	cloudConnector  utils.CloudConnector
-	tokenGenerator  utils.TokenGenerator
+	tokenGenerator  utils.IKeyManager
 	localKeyStorage utils.ILocalKeyStorage
 }
 
@@ -23,7 +23,7 @@ func NewHouseKeeper(ctx context.Context) (*HouseKeeper, error) {
 	}
 
 	localKeyStorage := utils.NewLocalKeyStorage()
-	tokenGenerator := utils.NewTokenGenerator(cloudConnector, localKeyStorage)
+	tokenGenerator := utils.NewKeyManager(cloudConnector, localKeyStorage)
 
 	return &HouseKeeper{
 		logger:          logger,

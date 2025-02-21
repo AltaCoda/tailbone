@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
 	"github.com/altacoda/tailbone/cmd/keys"
 	"github.com/altacoda/tailbone/cmd/server"
 	"github.com/altacoda/tailbone/utils"
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -31,6 +32,10 @@ func init() {
 
 	// Here you will define your flags and configuration settings.
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.tailbone.*)")
+	rootCmd.PersistentFlags().StringP("output", "o", "text", "output format (json, yaml, text)")
+
+	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
+	viper.SetDefault("key.prefix", "tb") // WARNING: Changing this can lead to keys being left behind
 
 	// Add commands
 	rootCmd.AddCommand(server.Cmd)

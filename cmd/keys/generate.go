@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/altacoda/tailbone/proto"
+	"github.com/altacoda/tailbone/utils"
 )
 
 var generateCmd = &cobra.Command{
@@ -37,6 +39,13 @@ func runGenerate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to generate keys: %w", err)
 	}
 
-	fmt.Printf("Generated new key pair with ID: %s\n", resp.KeyId)
-	return nil
+	out := utils.OutData{
+		Headers: table.Row{"KeyId", "Algorithm"},
+		Rows:    []table.Row{},
+	}
+
+	out.Rows = append(out.Rows, table.Row{resp.Key.KeyId, resp.Key.Algorithm})
+	out.RawData = append(out.RawData, resp)
+
+	return utils.Print(out)
 }

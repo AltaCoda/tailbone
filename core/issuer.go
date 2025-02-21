@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -89,10 +88,11 @@ func (i *TokenIssuer) loadLatestKey(_ context.Context) (jwk.Key, error) {
 		if len(parts) != 2 {
 			continue
 		}
-		timestamp, err := strconv.ParseInt(parts[1], 10, 64)
+		ts, err := utils.ParseCreatedAt(entry.Name())
 		if err != nil {
 			continue
 		}
+		timestamp := ts.Unix()
 		if timestamp > latestTime {
 			latestTime = timestamp
 			latestKey = entry.Name()

@@ -13,8 +13,9 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:   "keys",
-	Short: "Key management commands",
+	Use:     "keys",
+	Aliases: []string{"key"},
+	Short:   "Key management commands",
 	Long: `Key management commands for the Tailbone identity server.
 These commands allow you to generate, upload, and manage signing keys.`,
 }
