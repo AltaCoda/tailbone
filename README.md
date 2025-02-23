@@ -261,6 +261,8 @@ Example:
 tailbone keys remove key_12345
 ```
 
+Use `--yes` to skip the confirmation prompt.
+
 ## Contributing
 
 We welcome contributions to Tailbone! Here's how you can help:
