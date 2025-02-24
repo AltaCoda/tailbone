@@ -3,6 +3,11 @@ Sponsored by [Fortworx](https://fortworx.com)
   <img alt="Fortworx Logo" src="https://cdn.fortworx.com/images/logo_full_dark.png" width="300"/>
 </div>
 
+Sponsored by [Cloud 66](https://cloud66.com)
+<div>
+    <img alt="Cloud 66 Logo" src="https://s3.us-east-1.amazonaws.com/cdn.cloud66.com/images/cloud66_logo_150.png" width="150"/>
+</div>
+
 # Tailbone
 
 Tailbone is a JWT issuer that uses Tailscale as identity provider.
