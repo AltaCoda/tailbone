@@ -1,6 +1,6 @@
-Sponsored by [Fortworx](https://fortworx.com)
+Sponsored by [Bench47](https://bench47.com/)
 <div>
-  <img alt="Fortworx Logo" src="https://cdn.fortworx.com/images/logo_full_dark.png" width="300"/>
+  <img alt="Bench47 Logo" src="https://markbase-cdn.s3.us-east-2.amazonaws.com/brand/bench47-logo-light.png" width="300"/>
 </div>
 
 Sponsored by [Cloud 66](https://cloud66.com)
